@@ -3,102 +3,126 @@ import pandas as pd
 import plotly.figure_factory as ff
 import numpy as np
 
-st.set_page_config(layout="wide", page_title="Naval Motors")
+# --- 1. 系統設定 ---
+st.set_page_config(page_title="Naval Motors", page_icon="🏎️", layout="wide")
 
-# --- 1. 讀取數據 (保留原始邏輯，但加上欄位對應以免報錯) ---
+# --- 2. 數據核心 (含自動校正引擎) ---
 @st.cache_data
 def load_data():
     try:
         df = pd.read_csv('clean_toyota_data.csv')
         
-        # 簡單暴力的欄位對應 (針對你的 CSV 格式)
-        # 如果你的 CSV 欄位是大寫，這裡把它轉成程式慣用的小寫
-        df = df.rename(columns={
-            'Model': 'series',
-            'Year': 'year',
-            'Price': 'price',
-            'Raw_Text': 'desc'
-        })
+        # 欄位正規化：不管 CSV 標題是大寫小寫，通通轉成統一格式
+        df.columns = df.columns.str.strip().str.lower() 
+        rename_map = {
+            'model': 'series',
+            'year': 'year',
+            'price': 'price',
+            'naval_price': 'price', # 如果有 Naval 預測價，優先使用
+            'raw_text': 'desc'
+        }
+        df = df.rename(columns=rename_map)
+
+        # 確保關鍵欄位存在
+        if 'series' not in df.columns: df['series'] = 'Unknown'
         
-        # 簡單清洗年份 (處理 2012/03 這種格式)
+        # 年份清洗：把 "2012/03" 變成 2012
         df['year'] = df['year'].astype(str).str.split('/').str[0]
         df = df[df['year'].str.isnumeric()]
         df['year'] = df['year'].astype(int)
-        
-        # 確保價格是數字
+
+        # 價格清洗
         df['price'] = pd.to_numeric(df['price'], errors='coerce')
         df = df.dropna(subset=['price'])
         
+        # 🚨【關鍵修正】自動校正數量級
+        # 如果全場中位數低於 20 萬，極有可能是數據少了一個 0
+        if df['price'].median() < 200000:
+            df['price'] = df['price'] * 10
+            
         return df
     except Exception as e:
         return None
 
 df = load_data()
 
+# --- 3. 介面層 ---
 if df is None:
-    st.error("讀取失敗，請確認 CSV 檔案存在。")
+    st.error("❌ 系統錯誤：找不到 clean_toyota_data.csv，請確認檔案已上傳。")
     st.stop()
 
-# --- 2. 側邊欄 ---
-st.sidebar.header("🔍 參數設定")
+# 側邊欄
+st.sidebar.header("🔍 估價參數")
 model_list = sorted(df['series'].unique())
 selected_model = st.sidebar.selectbox("車型", model_list)
-
 year_list = sorted(df[df['series'] == selected_model]['year'].unique(), reverse=True)
 selected_year = st.sidebar.selectbox("年份", year_list)
+user_price_input = st.sidebar.number_input("您的目標開價 (萬)", value=50.0, step=1.0)
+user_price = user_price_input * 10000
 
-user_price_input = st.sidebar.number_input("開價 (萬)", value=50.0, step=0.5)
-user_price_raw = user_price_input * 10000
-
-# --- 3. 核心計算 ---
+# 核心篩選
 target_cars = df[(df['series'] == selected_model) & (df['year'] == selected_year)]
 
-st.title(f"{selected_year} {selected_model} 行情分析")
+# --- 4. 結果呈現 (還原經典版) ---
+st.title(f"{selected_year} {selected_model} 市場行情")
 
-if len(target_cars) > 1:
-    market_avg = target_cars['price'].mean()
+if len(target_cars) >= 2:
+    # 計算數據
     market_median = target_cars['price'].median()
-    diff = user_price_raw - market_median
-
+    diff = user_price - market_median
+    
+    # 三大指標
     c1, c2, c3 = st.columns(3)
     c1.metric("您的開價", f"{user_price_input} 萬")
-    c2.metric("市場行情 (中位數)", f"{market_median/10000:.1f} 萬")
-    c3.metric("價差", f"{diff/10000:.1f} 萬", delta_color="inverse")
+    c2.metric("大數據行情 (中位數)", f"{market_median/10000:.1f} 萬")
+    
+    # 價差邏輯
+    if diff > 0:
+        c3.metric("價差 (高於行情)", f"{diff/10000:.1f} 萬", delta=f"-{diff/10000:.1f} 萬", delta_color="inverse")
+    else:
+        c3.metric("價差 (低於行情)", f"{abs(diff)/10000:.1f} 萬", delta=f"+{abs(diff)/10000:.1f} 萬")
 
     st.markdown("---")
-    
-    # --- 4. 圖表修復區 (只改這裡) ---
-    st.subheader("市場價格分佈圖")
 
-    # 使用 distplot (原本的圖)，但把參數調得更人性化
-    # bin_size=20000: 每 2 萬塊一格，讓圖形比較滑順
-    fig = ff.create_distplot(
-        [target_cars['price']], 
-        ['市場價格'], 
-        bin_size=20000, 
-        show_hist=True, 
-        show_rug=False # 關閉底部毛邊，看起來比較乾淨
-    )
-
-    # 加入你的紅線
-    fig.add_vline(x=user_price_raw, line_width=3, line_dash="dash", line_color="red")
+    # 圖表區 (Distplot 回歸)
+    st.subheader("📉 車商成本分佈圖")
     
-    # [關鍵修改] 隱藏看不懂的 Y 軸數字 (50μ)
-    fig.update_layout(
-        title_text="",
-        xaxis_title="價格 (元)",
-        yaxis_title="車輛數量密度", # 改個中文名字
-        showlegend=False,
-        height=400,
-        margin=dict(l=20, r=20, t=30, b=20)
-    )
-    # 把 Y 軸的刻度與數字全部隱藏
-    fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False)
-    
-    # 設定 X 軸格式 (不要顯示 500k，顯示完整數字或讓 Plotly 自動處理)
-    fig.update_xaxes(showgrid=True)
+    try:
+        # 建立圖表 (隱藏 rug 以保持乾淨)
+        fig = ff.create_distplot(
+            [target_cars['price']], 
+            ['市場行情'], 
+            bin_size=20000, 
+            show_hist=True, 
+            show_rug=False,
+            colors=['#00CC96'] # Naval Green
+        )
 
-    st.plotly_chart(fig, use_container_width=True)
+        # 標示用戶位置
+        fig.add_vline(x=user_price, line_width=3, line_dash="dash", line_color="#FF4136")
+        fig.add_annotation(x=user_price, y=0, text="您的位置", showarrow=True, arrowhead=1, yshift=10)
+
+        # 極簡化圖表設定
+        fig.update_layout(
+            showlegend=False,
+            height=400,
+            margin=dict(l=10, r=10, t=30, b=10),
+            xaxis_title="價格 (元)",
+            yaxis_title="分佈密度",
+            plot_bgcolor="rgba(0,0,0,0)" # 透明背景
+        )
+        # 隱藏 Y 軸那些看不懂的數字
+        fig.update_yaxes(showticklabels=False, showgrid=False)
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+    except Exception as e:
+        st.warning("數據過於集中，改用簡易圖表顯示。")
+        st.bar_chart(target_cars['price'])
 
 else:
-    st.warning("數據不足，無法繪圖")
+    st.warning("⚠️ 該年份車源不足，無法進行統計分析。")
+    st.dataframe(target_cars)
+
+st.markdown("---")
+st.caption("Naval Motors Intelligence")
