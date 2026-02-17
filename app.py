@@ -1,128 +1,123 @@
 import streamlit as st
 import pandas as pd
 import plotly.figure_factory as ff
-import plotly.graph_objects as go
+import numpy as np
 
-# --- 設定網頁標題與佈局 ---
-st.set_page_config(page_title="Naval Motors 價格揭密", page_icon="🚗")
+# --- 1. 頁面設定 ---
+st.set_page_config(
+    page_title="Naval Motors 估價神器",
+    page_icon="🚗",
+    layout="wide"
+)
 
-# --- 1. 讀取數據 (肌肉記憶) ---
+# --- 2. 數據讀取 (加入快取機制，加速運作) ---
 @st.cache_data
 def load_data():
-    # 讀取你剛剛煉金出來的 CSV
-    df = pd.read_csv("clean_toyota_data.csv")
-    
-    # 資料清洗：確保年份是數字
-    df['Year'] = df['Year'].astype(str).str.extract(r'(\d{4})')
-    df = df.dropna(subset=['Year', 'Price'])
-    df['Year'] = df['Year'].astype(int)
-    
-    # 建立一個「顯示用」的車型欄位 (包含數量)
-    model_counts = df['Model'].value_counts()
-    df['Model_Display'] = df['Model'].apply(lambda x: f"{x} ({model_counts.get(x, 0)}筆)")
-    
+    # 讀取你的 2899 筆黃金數據
+    # 假設你的 csv 檔名是 clean_toyota_data.csv
+    # 欄位假設包含: 'series'(車型), 'year'(年份), 'price'(價格), 'mileage'(里程)
+    df = pd.read_csv('clean_toyota_data.csv')
     return df
 
 try:
     df = load_data()
 except FileNotFoundError:
-    st.error("❌ 找不到 clean_toyota_data.csv，請確認檔案是否在同一個資料夾！")
+    st.error("錯誤：找不到 clean_toyota_data.csv，請確認檔案是否已上傳到 GitHub 或本地資料夾。")
     st.stop()
 
-# --- 2. 側邊欄：使用者輸入 ---
+# --- 3. 側邊欄 (Sidebar) ---
 st.sidebar.header("🔍 查詢您的目標車輛")
 
-# 選擇車型 (連動選單)
-model_list = sorted(df['Model'].unique())
-selected_model = st.sidebar.selectbox("選擇車型", model_list, index=model_list.index('PRIUS') if 'PRIUS' in model_list else 0)
+# 選擇車型
+model_list = sorted(df['series'].unique())
+selected_model = st.sidebar.selectbox("選擇車型", model_list)
 
-# 選擇年份 (只顯示該車型有的年份)
-available_years = sorted(df[df['Model'] == selected_model]['Year'].unique(), reverse=True)
-selected_year = st.sidebar.selectbox("選擇年份", available_years)
+# 根據車型連動選擇年份
+year_list = sorted(df[df['series'] == selected_model]['year'].unique(), reverse=True)
+selected_year = st.sidebar.selectbox("選擇年份", year_list)
 
-# 用戶輸入：目前看到的市場開價 (用來打臉用)
-st.sidebar.markdown("---")
-user_price_input = st.sidebar.number_input("您在網路上看到的開價 (萬)", min_value=10, max_value=500, value=50, step=1)
-user_price = user_price_input * 10000 # 轉成元
+# 輸入網路上看到的開價 (單位：萬)
+user_price_input = st.sidebar.number_input("您在網路上看到的開價 (萬)", min_value=10.0, max_value=200.0, value=50.0, step=0.5)
+user_price_raw = user_price_input * 10000  # 換算成元
 
-# --- 3. 核心邏輯：計算批發行情 ---
+# --- 4. 核心邏輯 ---
 # 篩選數據
-target_data = df[(df['Model'] == selected_model) & (df['Year'] == selected_year)]
+target_cars = df[(df['series'] == selected_model) & (df['year'] == selected_year)]
 
-if len(target_data) < 3:
-    st.warning(f"⚠️ {selected_year} 年的 {selected_model} 樣本數不足 ({len(target_data)}筆)，數據可能不準確。")
+# --- 5. 主畫面顯示 ---
+st.title(f"📊 {selected_year} {selected_model} 市場行情分析")
+
+if len(target_cars) < 3:
+    st.warning(f"⚠️ 數據樣本不足：資料庫中 {selected_year} 年的 {selected_model} 只有 {len(target_cars)} 台，分析可能不夠精準。")
 else:
-    # 計算 Naval 批發底價 (批發成本 + 15% 管銷)
-    # 這裡直接用你 CSV 裡的 Wholesale_Est 或是現場算
-    wholesale_prices = target_data['Price'] * 1.15 
+    # 計算市場行情
+    market_avg = target_cars['price'].mean()
+    market_median = target_cars['price'].median()
+    price_diff = user_price_raw - market_median
     
-    avg_wholesale = wholesale_prices.mean()
-    min_wholesale = wholesale_prices.min()
-    max_wholesale = wholesale_prices.max()
-    
-    # 計算價差 (暴利空間)
-    profit_gap = user_price - avg_wholesale
-    is_ripoff = profit_gap > 30000 # 如果價差超過 3萬，視為盤子
-
-    # --- 4. 主畫面：恐懼行銷 ---
-    st.title(f"📊 {selected_year} {selected_model} 真實行情分析")
-    
-    # 顯示核心數據卡片
+    # 顯示三大指標
     col1, col2, col3 = st.columns(3)
-    col1.metric("網路上開價", f"{user_price/10000:.1f} 萬")
-    col2.metric("車商預估成本", f"{avg_wholesale/10000:.1f} 萬", delta_color="inverse")
-    col3.metric("潛在價差 (暴利)", f"{profit_gap/10000:.1f} 萬", 
-                delta=f"-{profit_gap/10000:.1f} 萬" if is_ripoff else "合理",
-                delta_color="normal" if is_ripoff else "off")
+    with col1:
+        st.metric("您的目標開價", f"{user_price_input} 萬")
+    with col2:
+        st.metric("大數據估算成本 (中位數)", f"{market_median/10000:.1f} 萬")
+    with col3:
+        if price_diff > 0:
+            st.metric("潛在溢價 (被貴了)", f"{price_diff/10000:.1f} 萬", delta=f"-{price_diff/10000:.1f} 萬", delta_color="inverse")
+        else:
+            st.metric("潛在價差 (划算)", f"{abs(price_diff)/10000:.1f} 萬", delta=f"+{abs(price_diff)/10000:.1f} 萬")
 
     st.markdown("---")
 
-    # --- 5. 視覺化：價格分佈圖 ---
-    # 使用 Plotly 畫分佈圖
-    fig = ff.create_distplot([wholesale_prices], ['車商進貨成本分佈'], bin_size=10000, show_rug=False, colors=['#00CC96'])
+    # --- 6. 視覺化圖表 (優化版) ---
+    st.subheader("📉 車商成本 vs 市場開價分佈圖")
     
-    # 加上一條紅線：使用者的開價
-    fig.add_shape(type="line",
-        x0=user_price, y0=0, x1=user_price, y1=0.00005, # Y軸高度可能需微調
-        line=dict(color="Red", width=4, dash="dashdot")
+    # 準備繪圖數據
+    hist_data = [target_cars['price']]
+    group_labels = ['市場行情分佈']
+
+    # 建立圖表 (使用 distplot 但隱藏過於數學的細節)
+    # bin_size 設為 20000 (2萬元) 讓曲線平滑
+    fig = ff.create_distplot(hist_data, group_labels, bin_size=20000, show_hist=True, show_rug=False)
+
+    # 加入用戶開價的紅線
+    fig.add_vline(
+        x=user_price_raw, 
+        line_width=3, 
+        line_dash="dash", 
+        line_color="red",
+        annotation_text=f"您的位置", 
+        annotation_position="top right"
     )
-    
-    # 加上標註
-    fig.add_annotation(x=user_price, y=0.00004, text=f"您的開價: {user_price/10000}萬", showarrow=True, arrowhead=1)
-    
-    fig.update_layout(title_text='車商成本 vs 市場開價', xaxis_title='價格 (元)', showlegend=False)
+
+    # 優化排版 (移除看不懂的 Y 軸)
+    fig.update_layout(
+        title_text='', # 標題已在上面用 st.subheader 顯示
+        xaxis_title='價格 (元)',
+        yaxis_title='市場分佈密度',
+        showlegend=False,
+        height=450,
+        margin=dict(l=20, r=20, t=30, b=20),
+        xaxis=dict(
+            tickmode='linear',
+            dtick=50000  # X軸每 5 萬顯示一個刻度
+        )
+    )
+    # 隱藏 Y 軸刻度
+    fig.update_yaxes(showticklabels=False, showgrid=False)
+
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- 6. 結論與導流 (Call to Action) ---
-    if is_ripoff:
-        st.error(f"🚨 **警告：您查詢的價格比合理行情貴了約 {int(profit_gap/10000)} 萬元！**")
-        st.markdown(f"""
-        這筆錢您可以省下來做大保養或換輪胎。
-        我們手上有這年份 {selected_model} 的**通病檢查表**與**議價話術**。
-        """)
-        
-        # 導流按鈕 (這就是你的私人生意入口)
-        # 用 HTML 語法做一個漂亮的按鈕
-        line_url = "https://line.me/ti/p/你的ID" # 請換成你的 LINE 連結
-        st.markdown(f'''
-            <a href="{line_url}" target="_blank">
-                <button style="
-                    background-color: #d32f2f; 
-                    color: white; 
-                    padding: 12px 24px; 
-                    border: none; 
-                    border-radius: 4px; 
-                    font-size: 16px; 
-                    font-weight: bold; 
-                    cursor: pointer; 
-                    width: 100%;">
-                    🔥 點此索取 {int(profit_gap/10000)} 萬元的殺價劇本 (LINE)
-                </button>
-            </a>
-            ''', unsafe_allow_html=True)
-            
+    # --- 7. 下一步行動 (CTA) ---
+    if price_diff > 30000:
+        st.error(f"🚨 警告：這個開價比行情貴了約 {price_diff/10000:.1f} 萬！")
+        st.markdown("這筆錢您可以省下來做大保養或換輪胎。我們手上有這年份的 **通病檢查表** 與 **議價話術**。")
+        st.button("🔥 點此索取殺價劇本 (Line)", type="primary")
+    elif price_diff < -20000:
+        st.success("✅ 這是一個非常不錯的價格，建議確認車況後儘快下手！")
     else:
-        st.success("✅ **恭喜：這個價格在合理範圍內。**")
-        st.info("但在簽約前，您確認過電池健康度與變速箱狀況了嗎？")
-        line_url = "https://line.me/ti/p/你的ID"
-        st.markdown(f"[💬 預約 Naval 專家驗車服務]({line_url})")
+        st.info("ℹ️ 價格符合行情，屬於合理範圍。")
+
+# 頁面底部
+st.markdown("---")
+st.caption("Powered by Naval Motors Data Lab | 數據來源：2899 筆實時市場交易紀錄")
