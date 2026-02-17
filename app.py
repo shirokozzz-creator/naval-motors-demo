@@ -10,30 +10,46 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 2. 數據讀取 (加入快取機制，加速運作) ---
+# --- 2. 數據讀取 ---
 @st.cache_data
 def load_data():
-    # 讀取你的 2899 筆黃金數據
-    # 假設你的 csv 檔名是 clean_toyota_data.csv
-    # 欄位假設包含: 'series'(車型), 'year'(年份), 'price'(價格), 'mileage'(里程)
-    df = pd.read_csv('clean_toyota_data.csv')
-    return df
+    # 讀取你的 csv
+    try:
+        df = pd.read_csv('clean_toyota_data.csv')
+        return df
+    except FileNotFoundError:
+        return None
 
-try:
-    df = load_data()
-except FileNotFoundError:
-    st.error("錯誤：找不到 clean_toyota_data.csv，請確認檔案是否已上傳到 GitHub 或本地資料夾。")
+df = load_data()
+
+if df is None:
+    st.error("❌ 找不到 clean_toyota_data.csv，請確認檔案是否已上傳。")
     st.stop()
+
+# --- 🚨 自動偵錯系統 (Debug System) ---
+# 這裡會檢查你的欄位名稱，如果我們猜錯了，它會直接告訴你正確的
+target_col_name = 'series'  # 我原本猜的名字
+
+if target_col_name not in df.columns:
+    st.error(f"⚠️ 發生錯誤：找不到名為 '{target_col_name}' 的欄位。")
+    st.warning(f"您的 CSV 實際欄位名稱如下：")
+    st.code(df.columns.tolist()) # 這行會把正確答案印出來
+    st.info("請將上方看到的『車型』欄位名稱（例如 model, name, car_type 等）告訴我，我來修正程式碼。")
+    
+    # 為了讓你能先看資料，我把前 5 筆印出來
+    st.subheader("資料預覽：")
+    st.dataframe(df.head())
+    st.stop() # 程式暫停，等待修正
 
 # --- 3. 側邊欄 (Sidebar) ---
 st.sidebar.header("🔍 查詢您的目標車輛")
 
 # 選擇車型
-model_list = sorted(df['series'].unique())
+model_list = sorted(df[target_col_name].unique())
 selected_model = st.sidebar.selectbox("選擇車型", model_list)
 
 # 根據車型連動選擇年份
-year_list = sorted(df[df['series'] == selected_model]['year'].unique(), reverse=True)
+year_list = sorted(df[df[target_col_name] == selected_model]['year'].unique(), reverse=True)
 selected_year = st.sidebar.selectbox("選擇年份", year_list)
 
 # 輸入網路上看到的開價 (單位：萬)
@@ -42,7 +58,7 @@ user_price_raw = user_price_input * 10000  # 換算成元
 
 # --- 4. 核心邏輯 ---
 # 篩選數據
-target_cars = df[(df['series'] == selected_model) & (df['year'] == selected_year)]
+target_cars = df[(df[target_col_name] == selected_model) & (df['year'] == selected_year)]
 
 # --- 5. 主畫面顯示 ---
 st.title(f"📊 {selected_year} {selected_model} 市場行情分析")
@@ -77,7 +93,6 @@ else:
     group_labels = ['市場行情分佈']
 
     # 建立圖表 (使用 distplot 但隱藏過於數學的細節)
-    # bin_size 設為 20000 (2萬元) 讓曲線平滑
     fig = ff.create_distplot(hist_data, group_labels, bin_size=20000, show_hist=True, show_rug=False)
 
     # 加入用戶開價的紅線
@@ -90,9 +105,9 @@ else:
         annotation_position="top right"
     )
 
-    # 優化排版 (移除看不懂的 Y 軸)
+    # 優化排版
     fig.update_layout(
-        title_text='', # 標題已在上面用 st.subheader 顯示
+        title_text='',
         xaxis_title='價格 (元)',
         yaxis_title='市場分佈密度',
         showlegend=False,
@@ -100,10 +115,9 @@ else:
         margin=dict(l=20, r=20, t=30, b=20),
         xaxis=dict(
             tickmode='linear',
-            dtick=50000  # X軸每 5 萬顯示一個刻度
+            dtick=50000 
         )
     )
-    # 隱藏 Y 軸刻度
     fig.update_yaxes(showticklabels=False, showgrid=False)
 
     st.plotly_chart(fig, use_container_width=True)
@@ -118,6 +132,5 @@ else:
     else:
         st.info("ℹ️ 價格符合行情，屬於合理範圍。")
 
-# 頁面底部
 st.markdown("---")
-st.caption("Powered by Naval Motors Data Lab | 數據來源：2899 筆實時市場交易紀錄")
+st.caption("Powered by Naval Motors Data Lab")
