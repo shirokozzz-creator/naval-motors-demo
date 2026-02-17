@@ -10,61 +10,67 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 2. 數據讀取 ---
+# --- 2. 數據讀取與清洗 (關鍵修復區) ---
 @st.cache_data
-def load_data():
-    # 讀取你的 csv
+def load_and_clean_data():
     try:
+        # 讀取 CSV
         df = pd.read_csv('clean_toyota_data.csv')
+        
+        # --- 🔧 自動欄位對應 (Fixing Columns) ---
+        # 這裡把你的欄位名稱 (Model, Year, Price) 對應到程式邏輯
+        df = df.rename(columns={
+            'Model': 'series',
+            'Year': 'year',
+            'Price': 'price',
+            'Raw_Text': 'desc'  # 保留描述欄位備用
+        })
+        
+        # --- 🔧 年份格式清洗 (Fixing Year) ---
+        # 把 "2012/03" 這種格式切開，只留 "2012"，並轉成數字
+        #astype(str) 確保它是字串，split('/') 切割，str[0] 取第一段
+        df['year'] = df['year'].astype(str).str.split('/').str[0].astype(int)
+        
         return df
     except FileNotFoundError:
         return None
+    except Exception as e:
+        st.error(f"數據處理發生未預期的錯誤: {e}")
+        return None
 
-df = load_data()
+df = load_and_clean_data()
 
 if df is None:
     st.error("❌ 找不到 clean_toyota_data.csv，請確認檔案是否已上傳。")
     st.stop()
 
-# --- 🚨 自動偵錯系統 (Debug System) ---
-# 這裡會檢查你的欄位名稱，如果我們猜錯了，它會直接告訴你正確的
-target_col_name = 'series'  # 我原本猜的名字
-
-if target_col_name not in df.columns:
-    st.error(f"⚠️ 發生錯誤：找不到名為 '{target_col_name}' 的欄位。")
-    st.warning(f"您的 CSV 實際欄位名稱如下：")
-    st.code(df.columns.tolist()) # 這行會把正確答案印出來
-    st.info("請將上方看到的『車型』欄位名稱（例如 model, name, car_type 等）告訴我，我來修正程式碼。")
-    
-    # 為了讓你能先看資料，我把前 5 筆印出來
-    st.subheader("資料預覽：")
-    st.dataframe(df.head())
-    st.stop() # 程式暫停，等待修正
-
 # --- 3. 側邊欄 (Sidebar) ---
 st.sidebar.header("🔍 查詢您的目標車輛")
 
-# 選擇車型
-model_list = sorted(df[target_col_name].unique())
+# 選擇車型 (使用清洗後的 series 欄位)
+# 備註：如果你的 Model 欄位只有 "LEXUS" 而沒有 "CT200h"，這裡只會出現 "LEXUS"
+model_list = sorted(df['series'].unique())
 selected_model = st.sidebar.selectbox("選擇車型", model_list)
 
 # 根據車型連動選擇年份
-year_list = sorted(df[df[target_col_name] == selected_model]['year'].unique(), reverse=True)
+year_list = sorted(df[df['series'] == selected_model]['year'].unique(), reverse=True)
 selected_year = st.sidebar.selectbox("選擇年份", year_list)
 
 # 輸入網路上看到的開價 (單位：萬)
-user_price_input = st.sidebar.number_input("您在網路上看到的開價 (萬)", min_value=10.0, max_value=200.0, value=50.0, step=0.5)
+user_price_input = st.sidebar.number_input("您在網路上看到的開價 (萬)", min_value=1.0, max_value=200.0, value=50.0, step=0.5)
 user_price_raw = user_price_input * 10000  # 換算成元
 
 # --- 4. 核心邏輯 ---
 # 篩選數據
-target_cars = df[(df[target_col_name] == selected_model) & (df['year'] == selected_year)]
+target_cars = df[(df['series'] == selected_model) & (df['year'] == selected_year)]
 
 # --- 5. 主畫面顯示 ---
 st.title(f"📊 {selected_year} {selected_model} 市場行情分析")
 
-if len(target_cars) < 3:
-    st.warning(f"⚠️ 數據樣本不足：資料庫中 {selected_year} 年的 {selected_model} 只有 {len(target_cars)} 台，分析可能不夠精準。")
+if len(target_cars) < 2:
+    st.warning(f"⚠️ 數據樣本不足：資料庫中 {selected_year} 年的 {selected_model} 筆數過少，無法畫出分佈圖。")
+    # 就算不能畫圖，也嘗試顯示表格讓使用者參考
+    st.dataframe(target_cars)
 else:
     # 計算市場行情
     market_avg = target_cars['price'].mean()
@@ -79,7 +85,7 @@ else:
         st.metric("大數據估算成本 (中位數)", f"{market_median/10000:.1f} 萬")
     with col3:
         if price_diff > 0:
-            st.metric("潛在溢價 (被貴了)", f"{price_diff/10000:.1f} 萬", delta=f"-{price_diff/10000:.1f} 萬", delta_color="inverse")
+            st.metric("潛在溢價", f"{price_diff/10000:.1f} 萬", delta=f"-{price_diff/10000:.1f} 萬", delta_color="inverse")
         else:
             st.metric("潛在價差 (划算)", f"{abs(price_diff)/10000:.1f} 萬", delta=f"+{abs(price_diff)/10000:.1f} 萬")
 
@@ -92,40 +98,39 @@ else:
     hist_data = [target_cars['price']]
     group_labels = ['市場行情分佈']
 
-    # 建立圖表 (使用 distplot 但隱藏過於數學的細節)
-    fig = ff.create_distplot(hist_data, group_labels, bin_size=20000, show_hist=True, show_rug=False)
+    # 建立圖表 
+    # bin_size 設為 20000 (2萬元) 讓曲線平滑
+    try:
+        fig = ff.create_distplot(hist_data, group_labels, bin_size=20000, show_hist=True, show_rug=False)
 
-    # 加入用戶開價的紅線
-    fig.add_vline(
-        x=user_price_raw, 
-        line_width=3, 
-        line_dash="dash", 
-        line_color="red",
-        annotation_text=f"您的位置", 
-        annotation_position="top right"
-    )
-
-    # 優化排版
-    fig.update_layout(
-        title_text='',
-        xaxis_title='價格 (元)',
-        yaxis_title='市場分佈密度',
-        showlegend=False,
-        height=450,
-        margin=dict(l=20, r=20, t=30, b=20),
-        xaxis=dict(
-            tickmode='linear',
-            dtick=50000 
+        # 加入用戶開價的紅線
+        fig.add_vline(
+            x=user_price_raw, 
+            line_width=3, 
+            line_dash="dash", 
+            line_color="red",
+            annotation_text=f"您的位置", 
+            annotation_position="top right"
         )
-    )
-    fig.update_yaxes(showticklabels=False, showgrid=False)
 
-    st.plotly_chart(fig, use_container_width=True)
+        # 優化排版
+        fig.update_layout(
+            title_text='',
+            xaxis_title='價格 (元)',
+            yaxis_title='市場分佈密度',
+            showlegend=False,
+            height=450,
+            margin=dict(l=20, r=20, t=30, b=20),
+        )
+        fig.update_yaxes(showticklabels=False, showgrid=False)
+
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"圖表繪製失敗 (可能是數據過於集中): {e}")
 
     # --- 7. 下一步行動 (CTA) ---
     if price_diff > 30000:
         st.error(f"🚨 警告：這個開價比行情貴了約 {price_diff/10000:.1f} 萬！")
-        st.markdown("這筆錢您可以省下來做大保養或換輪胎。我們手上有這年份的 **通病檢查表** 與 **議價話術**。")
         st.button("🔥 點此索取殺價劇本 (Line)", type="primary")
     elif price_diff < -20000:
         st.success("✅ 這是一個非常不錯的價格，建議確認車況後儘快下手！")
