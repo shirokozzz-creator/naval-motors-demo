@@ -30,7 +30,7 @@ col_img, col_text = st.columns([1.2, 1])
 with col_img:
     # 物理防呆機制：檢查圖片是否存在
     # 請確保這張圖片與 app.py 放在同一個 GitHub 資料夾的最外層
-    img_filename = "Snipaste_2026-03-01_10-03-50.jpg"
+    img_filename = "Snipaste_2026-03-01_10-03-50.png"
     
     if os.path.exists(img_filename):
         st.image(img_filename, use_container_width=True)
@@ -71,3 +71,4 @@ if st.button("🚀 支付 NT$ 3,000 啟動金，進入專屬戰情室", type="pr
 
 st.divider()
 st.caption("Disclaimer: 本戰報為 Naval Motors 實際執行之去識別化交易紀錄。高套利空間源自特定時空之市場認知錯殺。二手車資產存在個體差異。")
+
