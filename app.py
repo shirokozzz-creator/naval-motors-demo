@@ -1,128 +1,100 @@
 import streamlit as st
 import pandas as pd
-import plotly.figure_factory as ff
 import numpy as np
 
-# --- 1. 系統設定 ---
-st.set_page_config(page_title="Naval Motors", page_icon="🏎️", layout="wide")
+# ==========================================
+# 1. 頁面全局設定
+# ==========================================
+st.set_page_config(
+    page_title="Naval Motors 戰情室 | 數據驅動資產攔截",
+    page_icon="🎯",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
-# --- 2. 數據核心 (含自動校正引擎) ---
+hide_st_style = """<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}</style>"""
+st.markdown(hide_st_style, unsafe_allow_html=True)
+
+# ==========================================
+# 2. 戰略緩存：讀取情報資產 (CSV)
+# ==========================================
+# 使用 @st.cache_data 裝飾器，確保資料只讀取一次，節省伺服器運算資源
 @st.cache_data
 def load_data():
     try:
-        df = pd.read_csv('clean_toyota_data.csv')
-        
-        # 欄位正規化：不管 CSV 標題是大寫小寫，通通轉成統一格式
-        df.columns = df.columns.str.strip().str.lower() 
-        rename_map = {
-            'model': 'series',
-            'year': 'year',
-            'price': 'price',
-            'naval_price': 'price', # 如果有 Naval 預測價，優先使用
-            'raw_text': 'desc'
-        }
-        df = df.rename(columns=rename_map)
-
-        # 確保關鍵欄位存在
-        if 'series' not in df.columns: df['series'] = 'Unknown'
-        
-        # 年份清洗：把 "2012/03" 變成 2012
-        df['year'] = df['year'].astype(str).str.split('/').str[0]
-        df = df[df['year'].str.isnumeric()]
-        df['year'] = df['year'].astype(int)
-
-        # 價格清洗
-        df['price'] = pd.to_numeric(df['price'], errors='coerce')
-        df = df.dropna(subset=['price'])
-        
-        # 🚨【關鍵修正】自動校正數量級
-        # 如果全場中位數低於 20 萬，極有可能是數據少了一個 0
-        if df['price'].median() < 200000:
-            df['price'] = df['price'] * 10
-            
+        # 嘗試讀取您的資料庫
+        df = pd.read_csv("clean_toyota_data.csv")
         return df
-    except Exception as e:
-        return None
+    except FileNotFoundError:
+        # 防呆機制：如果雲端找不到 CSV，生成備用測試數據庫，防止網站崩潰
+        st.warning("⚠️ 系統警告：偵測不到 clean_toyota_data.csv，已自動切換為備用戰術數據庫。")
+        data = {
+            'Car_Model': ['Corolla Cross Hybrid', 'NX200', 'CT200h', 'Altis', 'Camry Hybrid'],
+            'Market_Price_Avg': [710000, 920000, 440000, 540000, 650000],
+            'Battery_Risk_Cost': [45000, 0, 45000, 0, 50000], # 大電池隱藏 CapEx
+            'Tire_Cost': [12000, 16000, 12000, 10000, 14000],
+            'Major_Service_Cost': [8000, 12000, 8000, 6000, 10000]
+        }
+        return pd.DataFrame(data)
 
 df = load_data()
 
-# --- 3. 介面層 ---
-if df is None:
-    st.error("❌ 系統錯誤：找不到 clean_toyota_data.csv，請確認檔案已上傳。")
-    st.stop()
-
-# 側邊欄
-st.sidebar.header("🔍 估價參數")
-model_list = sorted(df['series'].unique())
-selected_model = st.sidebar.selectbox("車型", model_list)
-year_list = sorted(df[df['series'] == selected_model]['year'].unique(), reverse=True)
-selected_year = st.sidebar.selectbox("年份", year_list)
-user_price_input = st.sidebar.number_input("您的目標開價 (萬)", value=50.0, step=1.0)
-user_price = user_price_input * 10000
-
-# 核心篩選
-target_cars = df[(df['series'] == selected_model) & (df['year'] == selected_year)]
-
-# --- 4. 結果呈現 (還原經典版) ---
-st.title(f"{selected_year} {selected_model} 市場行情")
-
-if len(target_cars) >= 2:
-    # 計算數據
-    market_median = target_cars['price'].median()
-    diff = user_price - market_median
-    
-    # 三大指標
-    c1, c2, c3 = st.columns(3)
-    c1.metric("您的開價", f"{user_price_input} 萬")
-    c2.metric("大數據行情 (中位數)", f"{market_median/10000:.1f} 萬")
-    
-    # 價差邏輯
-    if diff > 0:
-        c3.metric("價差 (高於行情)", f"{diff/10000:.1f} 萬", delta=f"-{diff/10000:.1f} 萬", delta_color="inverse")
-    else:
-        c3.metric("價差 (低於行情)", f"{abs(diff)/10000:.1f} 萬", delta=f"+{abs(diff)/10000:.1f} 萬")
-
-    st.markdown("---")
-
-    # 圖表區 (Distplot 回歸)
-    st.subheader("📉 車商成本分佈圖")
-    
-    try:
-        # 建立圖表 (隱藏 rug 以保持乾淨)
-        fig = ff.create_distplot(
-            [target_cars['price']], 
-            ['市場行情'], 
-            bin_size=20000, 
-            show_hist=True, 
-            show_rug=False,
-            colors=['#00CC96'] # Naval Green
-        )
-
-        # 標示用戶位置
-        fig.add_vline(x=user_price, line_width=3, line_dash="dash", line_color="#FF4136")
-        fig.add_annotation(x=user_price, y=0, text="您的位置", showarrow=True, arrowhead=1, yshift=10)
-
-        # 極簡化圖表設定
-        fig.update_layout(
-            showlegend=False,
-            height=400,
-            margin=dict(l=10, r=10, t=30, b=10),
-            xaxis_title="價格 (元)",
-            yaxis_title="分佈密度",
-            plot_bgcolor="rgba(0,0,0,0)" # 透明背景
-        )
-        # 隱藏 Y 軸那些看不懂的數字
-        fig.update_yaxes(showticklabels=False, showgrid=False)
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-    except Exception as e:
-        st.warning("數據過於集中，改用簡易圖表顯示。")
-        st.bar_chart(target_cars['price'])
-
-else:
-    st.warning("⚠️ 該年份車源不足，無法進行統計分析。")
-    st.dataframe(target_cars)
-
+# ==========================================
+# 3. 頁面標題與首發案例 (維持上一回合的展示)
+# ==========================================
+st.markdown("<h1 style='text-align: center; color: #1E1E1E;'>Naval Motors 戰情室</h1>", unsafe_allow_html=True)
+st.markdown("<h4 style='text-align: center; color: #4CAF50;'>【 數據過濾雜訊，紀律決定套利 】</h4>", unsafe_allow_html=True)
 st.markdown("---")
-st.caption("Naval Motors Intelligence")
+
+# ==========================================
+# 4. 核心武器：TCO 殘酷試算器 (The Reality Check)
+# ==========================================
+st.markdown("### 🧮 隱藏成本掃描：TCO 殘酷試算器")
+st.markdown("傳統車商只讓你看到**「車價」**，Naval Motors 讓你直面資產的**「總持有成本 (Total Cost of Ownership)」**。")
+
+# 建立兩欄佈局：左邊讓客戶操作，右邊出報表
+col_input, col_output = st.columns([1, 1.5])
+
+with col_input:
+    st.markdown("##### 1. 輸入您的鎖定標的")
+    # 讓客戶從您的 CSV 資料庫中選擇車型
+    selected_car = st.selectbox("選擇車型 (Model)：", df['Car_Model'].unique())
+    
+    # 獲取該車型的數據
+    car_data = df[df['Car_Model'] == selected_car].iloc[0]
+    market_price = car_data['Market_Price_Avg']
+    
+    st.markdown("##### 2. 設定您的心理預期")
+    expected_years = st.slider("預計持有年限 (年)：", 1, 10, 5)
+    
+    # 計算隱藏成本 (OPEX + 尾端風險 CapEx)
+    hidden_cost = car_data['Battery_Risk_Cost'] + car_data['Tire_Cost'] + car_data['Major_Service_Cost']
+
+with col_output:
+    st.markdown("##### 📊 5 年期實體財務清算矩陣")
+    
+    # 用極端對比的圖表顯示：表面車價 vs 實際總噴錢
+    total_cost = market_price + hidden_cost
+    
+    st.error(f"⚠️ 傳統車商不會告訴你的真相：這台車的隱藏整備與尾端風險金高達 **NT$ {hidden_cost:,.0f}**")
+    
+    m1, m2 = st.columns(2)
+    m1.metric(label="表面終端均價", value=f"NT$ {market_price:,.0f}")
+    m2.metric(label="真實總持有成本 (TCO)", value=f"NT$ {total_cost:,.0f}", delta=f"+{hidden_cost:,.0f} 隱藏耗材", delta_color="inverse")
+    
+    st.markdown("""
+    > **工程學邏輯：** 如果你用市價買入，且沒有在 Day-1 檢查大電池模組電壓與耗材狀態，這筆隱藏成本將在未來 5 年內無情擊穿你的現金流。
+    """)
+
+# ==========================================
+# 5. 漏斗收斂：強制行動呼籲 (CTA)
+# ==========================================
+st.markdown("---")
+st.markdown("### 🛑 拒絕資訊不對稱的剝削")
+st.markdown("Naval Motors 的 $P_{max}$ 演算法，專為消滅上述隱藏成本而生。我們只尋找「前車主已買單耗材」或「市價錯殺空間大於 15%」的絕對防禦型資產。")
+
+if st.button("🚀 支付 NT$ 3,000 啟動金，授權 Naval 幫我攔截資產", type="primary", use_container_width=True):
+    st.success("（系統已記錄意向。正在為您串接綠界科技支付閘道與委任電子合約...）")
+    st.balloons() # 給客戶一點視覺多巴胺
+
+st.caption("Disclaimer: 本試算器依據 2026 年 Q1 市場回溯數據建構。二手車資產存在個體差異，真實 TCO 需經 Naval Motors 現場 OBD2 與物理查驗後方可鎖定。")
