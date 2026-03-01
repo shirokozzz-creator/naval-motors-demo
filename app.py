@@ -43,7 +43,7 @@ with col_text:
     st.markdown("""
     市場總是為恐懼定價，而 Naval Motors 為實體數據買單。
 
-    這是一台 **2022 Corolla Cross GR Hybrid**。在傳統市場，它因為「78,000 公里」與「營業退役」的標籤，遭到恐懼拋售。
+    這是一台 **2022 Corolla Cross GR Hybrid**。在傳統市場，它因為「78,000 公里」的標籤，遭到恐懼拋售。
     但工程學不看標籤，只看物理狀態。Naval Motors 透過情報攔截證實：
     
     * ✅ **Day-1 前已更換全新原廠 HV 大電池**
@@ -71,4 +71,5 @@ if st.button("🚀 支付 NT$ 3,000 啟動金，進入專屬戰情室", type="pr
 
 st.divider()
 st.caption("Disclaimer: 本戰報為 Naval Motors 實際執行之去識別化交易紀錄。高套利空間源自特定時空之市場認知錯殺。二手車資產存在個體差異。")
+
 
